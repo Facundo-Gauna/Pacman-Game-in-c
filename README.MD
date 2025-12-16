@@ -7,7 +7,7 @@ This project faithfully recreates the classic arcade experience, including ghost
 
 ---
 
-## 🎮 Features
+## Features
 
 * Classic Pacman gameplay
 * Ghost AI: Blinky, Pinky, Inky, Clyde (with original behavior logic)
@@ -22,9 +22,9 @@ This project faithfully recreates the classic arcade experience, including ghost
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
-### 📦 Dependencies
+###  Dependencies
 
 Make sure to have the following libraries installed:
 
@@ -49,7 +49,7 @@ make
 
 This will compile the game into `bin/pacman`.
 
-### ▶️ Run
+###  Run
 
 ```bash
 ./bin/pacman
@@ -57,7 +57,7 @@ This will compile the game into `bin/pacman`.
 
 ---
 
-## 🕹️ Controls
+##  Controls
 
 | Key          | Action          |
 | ------------ | --------------- |
@@ -69,7 +69,7 @@ This will compile the game into `bin/pacman`.
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 Pacman/
@@ -84,7 +84,7 @@ Pacman/
 
 ---
 
-## 📝 High Score System
+## High Score System
 
 * Top 10 scores saved to `scores.bin`
 * Players enter their name after each game
@@ -92,14 +92,14 @@ Pacman/
 
 ---
 
-## 🖼️ Assets
+## Assets
 
 * Font: [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P)
 * Sprites and sounds: Inspired by original Pacman, created manually or adapted
 
 ---
 
-## 🧠 Ghost AI Behavior
+## Ghost AI Behavior
 
 Each ghost uses a different strategy:
 
@@ -110,20 +110,7 @@ Each ghost uses a different strategy:
 
 ---
 
-## 📜 License
-
-This project is open-source under the MIT License.
-
----
-
-## 👨‍💻 Author
-
-**Facundo Gauna**
-Feel free to fork, contribute, or reach out!
-
----
-
-## ✅ TODO / Suggestions
+## TODO / Suggestions
 
 * Add music support
 * Add more reward animations
@@ -132,4 +119,4 @@ Feel free to fork, contribute, or reach out!
 
 ---
 
-Enjoy the classic experience!
+Enjoy it.
