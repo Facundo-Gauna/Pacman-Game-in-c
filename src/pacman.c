@@ -1,11 +1,120 @@
+#define SDL_MAIN_HANDLED
 #include "pacman.h"
 
+
 // ------------- HELPERS --------------
-static inline void create_text_texture(TextLabel* text, FontSize fontSize , FontColor color, AppContext* app) {
-    if(text->texture) {
-        SDL_DestroyTexture(text->texture);
-        text->texture = NULL;
+
+static void join_path(const char *base, const char *rel, char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    if (!base || !rel) {
+        out[0] = '\0';
+        return;
     }
+
+    char norm_rel[1024];
+    size_t ri = 0;
+    for (size_t i = 0; rel[i] != '\0' && ri + 1 < sizeof(norm_rel); ++i) {
+        char c = rel[i];
+        if (c == '/' || c == '\\') {
+            norm_rel[ri++] = PATH_SEP[0];
+        } else {
+            norm_rel[ri++] = c;
+        }
+    }
+    norm_rel[ri] = '\0';
+
+    size_t bl = strlen(base);
+    int need_sep = 0;
+    if (bl > 0) {
+        char last = base[bl - 1];
+        need_sep = (last != '/' && last != '\\');
+    }
+
+    if (need_sep) {
+        snprintf(out, out_sz, "%s%s%s", base, PATH_SEP, norm_rel);
+    } else {
+        snprintf(out, out_sz, "%s%s", base, norm_rel);
+    }
+}
+
+static void show_error_and_quit(const char *title, const char *msg, AppContext *app) {
+    if (title == NULL) title = "Error";
+    if (msg == NULL) msg = "Unknown error";
+
+    if (SDL_WasInit(SDL_INIT_VIDEO)) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, msg, NULL);
+    } else {
+        /* fallback  stderr */
+        fprintf(stderr, "%s: %s\n", title, msg);
+    }
+
+    if (app) quit_game_application(app);
+
+    exit(EXIT_FAILURE);
+}
+
+
+static inline void assertGame(bool cond, const char *msg, AppContext *app) {
+    if (cond) return;
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s\nSDL Error: %s", msg ? msg : "Fatal error", SDL_GetError());
+    show_error_and_quit("Fatal", buf, app);
+}
+
+static inline void assert_texture(SDL_Texture *tex, const char *path, AppContext *app) {
+    if (tex) return;
+    char buf[512];
+    if (path) snprintf(buf, sizeof(buf), "Failed to load texture: %s\nIMG Error: %s", path, IMG_GetError());
+    else snprintf(buf, sizeof(buf), "Failed to load texture\nIMG Error: %s", IMG_GetError());
+    show_error_and_quit("Texture load error", buf, app);
+}
+
+static inline void assert_font(TTF_Font *font, const char *path, AppContext *app) {
+    if (font) return;
+    char buf[512];
+    if (path) snprintf(buf, sizeof(buf), "Failed to load font: %s\nTTF Error: %s", path, TTF_GetError());
+    else snprintf(buf, sizeof(buf), "Failed to load font\nTTF Error: %s", TTF_GetError());
+    show_error_and_quit("Font load error", buf, app);
+}
+
+static inline void assert_chunk(Mix_Chunk *chunk, const char *path, AppContext *app) {
+    if (chunk) return;
+    char buf[512];
+    if (path) snprintf(buf, sizeof(buf), "Failed to load sound: %s\nMIX Error: %s", path, Mix_GetError());
+    else snprintf(buf, sizeof(buf), "Failed to load sound\nMIX Error: %s", Mix_GetError());
+    show_error_and_quit("Sound load error", buf, app);
+}
+
+static inline void assert_ptr(void *p, const char *what, AppContext *app) {
+    if (p) return;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "Out of memory or null pointer: %s", what ? what : "unknown");
+    show_error_and_quit("Memory error", buf, app);
+}
+
+static void safe_destroy_texture(SDL_Texture **tex) {
+    if (tex && *tex) {
+        SDL_DestroyTexture(*tex);
+        *tex = NULL;
+    }
+}
+
+static void safe_free_chunk(Mix_Chunk **chunk) {
+    if (chunk && *chunk) {
+        Mix_FreeChunk(*chunk);
+        *chunk = NULL;
+    }
+}
+
+static void safe_free(void **ptr) {
+    if (ptr && *ptr) {
+        free(*ptr);
+        *ptr = NULL;
+    }
+}
+
+static inline void create_text_texture(TextLabel* text, FontSize fontSize , FontColor color, AppContext* app) {
+    safe_destroy_texture(&text->texture);
 
     TTF_SetFontSize(app->font, fontSizes[fontSize]);    
     SDL_Surface* surf = TTF_RenderText_Blended(app->font, text->text, colors[color]);
@@ -232,7 +341,7 @@ static void update_ghosts(AppContext *app) {
 
         } else {
             Direction dir = rand() % DIR_COUNT;
-            u_int8_t attempts = 0;    
+            uint8_t attempts = 0;    
             while (attempts < DIR_COUNT) {
                 if (dir != (ghost->dir+2)%DIR_COUNT && try_move(ghost, dir, true, game)) return;
                 dir = (dir + 1) % DIR_COUNT;
@@ -367,8 +476,12 @@ static void render_playing_state(AppContext *app ,bool present){
         else if (app->game.ghosts[i].kind == TYPE_INKY) ghostBase = SPR_GHOST_INKY_1;
         else if (app->game.ghosts[i].kind == TYPE_CLYDE) ghostBase = SPR_GHOST_CLYDE_1;
 
-        SDL_Rect ghostDst = {ghost->col * TILE_WIN_SIZE,  ghost->row * TILE_WIN_SIZE + MAP_OFFSET_Y,  TILE_WIN_SIZE * 1.25f,  TILE_WIN_SIZE * 1.25f};
-        
+        SDL_Rect ghostDst = {
+            ghost->col * TILE_WIN_SIZE,
+            ghost->row * TILE_WIN_SIZE + MAP_OFFSET_Y,
+            (int)(TILE_WIN_SIZE * 1.25f),
+            (int)(TILE_WIN_SIZE * 1.25f)
+        };
         SDL_RenderCopy(app->renderer, app->spritesheet, &spriteClips[ghostBase], &ghostDst);
     }
     
@@ -606,29 +719,58 @@ void render(AppContext *app) {
 
 // ---------------- INIT AND QUIT ----------------
 void init_game_application(AppContext *app) {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0 || TTF_Init() != 0 
-    || IMG_Init(IMG_INIT_PNG) == 0 || Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
-        fprintf(stderr, "SDL Init Error: %s\n", SDL_GetError());
+    memset(app, 0, sizeof(AppContext));
+
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
+        fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+        exit(EXIT_FAILURE);
+    }
+    if (TTF_Init() != 0) {
+        fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError());
+        SDL_Quit();
+        exit(EXIT_FAILURE);
+    }
+    if ((IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) == 0) {
+        fprintf(stderr, "IMG_Init failed: %s\n", IMG_GetError());
+        TTF_Quit();
+        SDL_Quit();
+        exit(EXIT_FAILURE);
+    }
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+        fprintf(stderr, "Mix_OpenAudio failed: %s\n", Mix_GetError());
+        IMG_Quit();
+        TTF_Quit();
+        SDL_Quit();
         exit(EXIT_FAILURE);
     }
 
-    memset(app, 0, sizeof(AppContext));
-
     app->window = SDL_CreateWindow("Pacman Game", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                    WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
-    assert(app->window);
+    assertGame(app->window != NULL, "Failed to create SDL window", app);
 
     app->renderer = SDL_CreateRenderer(app->window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    assertGame(app->renderer != NULL, "Failed to create SDL renderer", app);
+
     SDL_RenderSetLogicalSize(app->renderer, WINDOW_WIDTH, WINDOW_HEIGHT);
     SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
-    assert(app->renderer);
 
-    app->font = TTF_OpenFont("assets/font/PressStart2P-Regular.ttf", fontSizes[STANDARD]);
-    assert(app->font);
+    char *base = SDL_GetBasePath();
+    char pathbuf[1024] = {0};
+    
+    if (!base) {
+        base = SDL_strdup("./");
+    }else{
+        uint16_t len = strlen(base);
+        base[len-1] = '\0';
+        for(uint16_t i = len-2 ; i>0 && base[i] != PATH_SEP[0] ; i--) base[i] = '\0'; 
+    }
 
-   
+    /* FONT */
+    join_path(base, "assets/font/PressStart2P-Regular.ttf", pathbuf, sizeof(pathbuf));
+    printf("Font base : %s\n",base);
+    app->font = TTF_OpenFont(pathbuf, fontSizes[STANDARD]);
+    assert_font(app->font, pathbuf, app);
 
-    // UI Setup
     app->ui.menu.play.text = strdup("PLAY (S)");
     app->ui.menu.play.dst = (SDL_Rect){120, 200, 0, 0};
 
@@ -657,38 +799,73 @@ void init_game_application(AppContext *app) {
     app->ui.scoreboard.hint.dst = (SDL_Rect){(WINDOW_WIDTH >> 1) - 190, (WINDOW_HEIGHT >> 1) - 30, 0, 0};
 
     app->ui.scoreboard.names.text = malloc(MAX_NAME_LEN+1);
+    assert_ptr(app->ui.scoreboard.names.text, "scoreboard.names.text alloc", app);
     app->ui.scoreboard.names.dst = (SDL_Rect){(WINDOW_WIDTH >> 1) - 75, (WINDOW_HEIGHT >> 1), 0, 0};
 
-    app->ui.scoreboard.scores.text = malloc(6);// max len of 16 bits integer
+    app->ui.scoreboard.scores.text = malloc(6);
+    assert_ptr(app->ui.scoreboard.scores.text, "scoreboard.scores.text alloc", app);
     app->ui.scoreboard.scores.dst = (SDL_Rect){(WINDOW_WIDTH >> 1) + 50, (WINDOW_HEIGHT >> 1), 0, 0};
 
     app->game.player.playerName.text = malloc(MAX_NAME_LEN+1);
-    app->game.player.playerName.dst =(SDL_Rect) {0,(WINDOW_HEIGHT>>1)+10,0,0};
+    assert_ptr(app->game.player.playerName.text, "playerName.text alloc", app);
+    app->game.player.playerName.dst = (SDL_Rect) {0,(WINDOW_HEIGHT>>1)+10,0,0};
     app->game.player.playerName.text[0] = '\0';
-    
-    // --IMAGE TEXTURES
-    app->ui.help.helpImg = IMG_LoadTexture(app->renderer, "assets/images/help.png");
-    app->ui.menu.title.img = IMG_LoadTexture(app->renderer, "assets/images/menu_title.png");
-    app->ui.overlay.gameOver.img = IMG_LoadTexture(app->renderer, "assets/images/game_over.png");
-    app->ui.overlay.pause.img = IMG_LoadTexture(app->renderer, "assets/images/pause.png");
-    app->ui.overlay.gameWin.img = IMG_LoadTexture(app->renderer, "assets/images/game_complete.png");
-    app->ui.scoreboard.rankingImg.img = IMG_LoadTexture(app->renderer, "assets/images/scoreboard.png");
-    app->spritesheet = IMG_LoadTexture(app->renderer, "assets/images/sprites.png");
-    
-    app->sounds.death = Mix_LoadWAV("assets/sounds/pacman_death.wav");
-    app->sounds.eatDot = Mix_LoadWAV("assets/sounds/eat_dot.wav");
-    app->sounds.eatGhost = Mix_LoadWAV("assets/sounds/eat_ghost.wav");
-    app->sounds.move = Mix_LoadWAV("assets/sounds/pacman_move.wav");
-    app->sounds.start = Mix_LoadWAV("assets/sounds/start_level.wav");
-    app->sounds.win = Mix_LoadWAV("assets/sounds/win.wav");
 
-    assert(app->spritesheet);    
-    assert(app->ui.help.helpImg);
-    assert(app->ui.menu.title.img);
-    assert(app->ui.overlay.gameOver.img);
-    assert(app->ui.overlay.pause.img);
-    assert(app->ui.overlay.gameWin.img);
-    assert(app->ui.scoreboard.rankingImg.img);
+    /* -- IMAGE TEXTURES */
+    join_path(base, "assets/images/help.png", pathbuf, sizeof(pathbuf));
+    app->ui.help.helpImg = IMG_LoadTexture(app->renderer, pathbuf);
+    assert_texture(app->ui.help.helpImg, pathbuf, app);
+
+    join_path(base, "assets/images/menu_title.png", pathbuf, sizeof(pathbuf));
+    app->ui.menu.title.img = IMG_LoadTexture(app->renderer, pathbuf);
+    assert_texture(app->ui.menu.title.img, pathbuf, app);
+
+    join_path(base, "assets/images/game_over.png", pathbuf, sizeof(pathbuf));
+    app->ui.overlay.gameOver.img = IMG_LoadTexture(app->renderer, pathbuf);
+    assert_texture(app->ui.overlay.gameOver.img, pathbuf, app);
+
+    join_path(base, "assets/images/pause.png", pathbuf, sizeof(pathbuf));
+    app->ui.overlay.pause.img = IMG_LoadTexture(app->renderer, pathbuf);
+    assert_texture(app->ui.overlay.pause.img, pathbuf, app);
+
+    join_path(base, "assets/images/game_complete.png", pathbuf, sizeof(pathbuf));
+    app->ui.overlay.gameWin.img = IMG_LoadTexture(app->renderer, pathbuf);
+    assert_texture(app->ui.overlay.gameWin.img, pathbuf, app);
+
+    join_path(base, "assets/images/scoreboard.png", pathbuf, sizeof(pathbuf));
+    app->ui.scoreboard.rankingImg.img = IMG_LoadTexture(app->renderer, pathbuf);
+    assert_texture(app->ui.scoreboard.rankingImg.img, pathbuf, app);
+
+    join_path(base, "assets/images/sprites.png", pathbuf, sizeof(pathbuf));
+    app->spritesheet = IMG_LoadTexture(app->renderer, pathbuf);
+    assert_texture(app->spritesheet, pathbuf, app);
+
+    /* -- SOUNDS */
+    join_path(base, "assets/sounds/pacman_death.wav", pathbuf, sizeof(pathbuf));
+    app->sounds.death = Mix_LoadWAV(pathbuf);
+    assert_chunk(app->sounds.death, pathbuf, app);
+
+    join_path(base, "assets/sounds/eat_dot.wav", pathbuf, sizeof(pathbuf));
+    app->sounds.eatDot = Mix_LoadWAV(pathbuf);
+    assert_chunk(app->sounds.eatDot, pathbuf, app);
+
+    join_path(base, "assets/sounds/eat_ghost.wav", pathbuf, sizeof(pathbuf));
+    app->sounds.eatGhost = Mix_LoadWAV(pathbuf);
+    assert_chunk(app->sounds.eatGhost, pathbuf, app);
+
+    join_path(base, "assets/sounds/pacman_move.wav", pathbuf, sizeof(pathbuf));
+    app->sounds.move = Mix_LoadWAV(pathbuf);
+    assert_chunk(app->sounds.move, pathbuf, app);
+
+    join_path(base, "assets/sounds/start_level.wav", pathbuf, sizeof(pathbuf));
+    app->sounds.start = Mix_LoadWAV(pathbuf);
+    assert_chunk(app->sounds.start, pathbuf, app);
+
+    join_path(base, "assets/sounds/win.wav", pathbuf, sizeof(pathbuf));
+    app->sounds.win = Mix_LoadWAV(pathbuf);
+    assert_chunk(app->sounds.win, pathbuf, app);
+
+    if (base) SDL_free(base);
 
     center_texture_rect(&app->ui.menu.title,0.575f, -200);
     center_texture_rect(&app->ui.overlay.gameOver,0.5f,0);
@@ -717,67 +894,82 @@ void init_game_application(AppContext *app) {
 }
 
 void quit_game_application(AppContext *app) {
+    if (!app) return;
+
     save_scores(&app->game.board);
 
-    // Destroy textures (text)
-    SDL_DestroyTexture(app->ui.menu.play.texture);
-    SDL_DestroyTexture(app->ui.menu.help.texture);
-    SDL_DestroyTexture(app->ui.menu.rank.texture);
-    SDL_DestroyTexture(app->ui.menu.exit.texture);
-    SDL_DestroyTexture(app->ui.menu.credit.texture);
+    /* -------- TEXTURES (TEXT) -------- */
+    safe_destroy_texture(&app->ui.menu.play.texture);
+    safe_destroy_texture(&app->ui.menu.help.texture);
+    safe_destroy_texture(&app->ui.menu.rank.texture);
+    safe_destroy_texture(&app->ui.menu.exit.texture);
+    safe_destroy_texture(&app->ui.menu.credit.texture);
 
-    SDL_DestroyTexture(app->ui.overlay.score.texture);
-    SDL_DestroyTexture(app->ui.overlay.lives.texture);
-    SDL_DestroyTexture(app->ui.overlay.ready.texture);
+    safe_destroy_texture(&app->ui.overlay.score.texture);
+    safe_destroy_texture(&app->ui.overlay.lives.texture);
+    safe_destroy_texture(&app->ui.overlay.ready.texture);
 
-    SDL_DestroyTexture(app->ui.scoreboard.hint.texture);
-    SDL_DestroyTexture(app->ui.scoreboard.names.texture);
-    SDL_DestroyTexture(app->ui.scoreboard.scores.texture);
+    safe_destroy_texture(&app->ui.scoreboard.hint.texture);
+    safe_destroy_texture(&app->ui.scoreboard.names.texture);
+    safe_destroy_texture(&app->ui.scoreboard.scores.texture);
 
-    SDL_DestroyTexture(app->game.player.playerName.texture);
+    safe_destroy_texture(&app->game.player.playerName.texture);
 
-    // Destroy textures (images)
-    SDL_DestroyTexture(app->spritesheet);
-    SDL_DestroyTexture(app->ui.help.helpImg);
-    SDL_DestroyTexture(app->ui.menu.title.img);
-    SDL_DestroyTexture(app->ui.overlay.gameOver.img);
-    SDL_DestroyTexture(app->ui.overlay.pause.img);
-    SDL_DestroyTexture(app->ui.overlay.gameWin.img);
-    SDL_DestroyTexture(app->ui.scoreboard.rankingImg.img);
+    /* -------- TEXTURES (IMAGES) -------- */
+    safe_destroy_texture(&app->spritesheet);
+    safe_destroy_texture(&app->ui.help.helpImg);
+    safe_destroy_texture(&app->ui.menu.title.img);
+    safe_destroy_texture(&app->ui.overlay.gameOver.img);
+    safe_destroy_texture(&app->ui.overlay.pause.img);
+    safe_destroy_texture(&app->ui.overlay.gameWin.img);
+    safe_destroy_texture(&app->ui.scoreboard.rankingImg.img);
 
-    // Destroy Sounds
-    Mix_FreeChunk(app->sounds.death);
-    Mix_FreeChunk(app->sounds.eatDot);
-    Mix_FreeChunk(app->sounds.eatGhost);
-    Mix_FreeChunk(app->sounds.move);
-    Mix_FreeChunk(app->sounds.death);
-    Mix_FreeChunk(app->sounds.win);
+    /* -------- SOUNDS -------- */
+    safe_free_chunk(&app->sounds.death);
+    safe_free_chunk(&app->sounds.eatDot);
+    safe_free_chunk(&app->sounds.eatGhost);
+    safe_free_chunk(&app->sounds.move);
+    safe_free_chunk(&app->sounds.win);
+    safe_free_chunk(&app->sounds.start);
 
-    // Free texts
-    free(app->ui.menu.play.text);
-    free(app->ui.menu.help.text);
-    free(app->ui.menu.rank.text);
-    free(app->ui.menu.exit.text);
-    free(app->ui.menu.credit.text);
+    /* -------- TEXT MEMORY -------- */
+    safe_free((void**)&app->ui.menu.play.text);
+    safe_free((void**)&app->ui.menu.help.text);
+    safe_free((void**)&app->ui.menu.rank.text);
+    safe_free((void**)&app->ui.menu.exit.text);
+    safe_free((void**)&app->ui.menu.credit.text);
 
-    free(app->ui.overlay.score.text);
-    free(app->ui.overlay.lives.text);
-    free(app->ui.overlay.ready.text);
+    safe_free((void**)&app->ui.overlay.score.text);
+    safe_free((void**)&app->ui.overlay.lives.text);
+    safe_free((void**)&app->ui.overlay.ready.text);
 
-    free(app->ui.scoreboard.hint.text);
-    free(app->ui.scoreboard.names.text);
-    free(app->ui.scoreboard.scores.text);
+    safe_free((void**)&app->ui.scoreboard.hint.text);
+    safe_free((void**)&app->ui.scoreboard.names.text);
+    safe_free((void**)&app->ui.scoreboard.scores.text);
 
-    free(app->game.player.playerName.text);
+    safe_free((void**)&app->game.player.playerName.text);
 
-    if (app->font) TTF_CloseFont(app->font);
-    if (app->renderer) SDL_DestroyRenderer(app->renderer);
-    if (app->window) SDL_DestroyWindow(app->window);
+    /* -------- SDL OBJECTS -------- */
+    if (app->font) {
+        TTF_CloseFont(app->font);
+        app->font = NULL;
+    }
+
+    if (app->renderer) {
+        SDL_DestroyRenderer(app->renderer);
+        app->renderer = NULL;
+    }
+
+    if (app->window) {
+        SDL_DestroyWindow(app->window);
+        app->window = NULL;
+    }
 
     TTF_Quit();
     IMG_Quit();
     SDL_Quit();
 }
+
 
 
 // ---------------- EVENTS HANDLERS ---------------
@@ -861,7 +1053,7 @@ static void handle_paused_events(AppContext *app) {
     }
     else if (key == SDLK_s) {  // Resume game
         // Adjust game timer for time spent paused
-        Uint32 pauseDuration = SDL_GetTicks() - app->timer.startPauseTicks;
+        uint32_t pauseDuration = SDL_GetTicks() - app->timer.startPauseTicks;
         app->timer.accumulator -= pauseDuration;  // Convert ms to seconds
         app->game.state = STATE_PLAYING;
     }
@@ -906,13 +1098,12 @@ void handle_events(AppContext *app) {
 }
 
 
-// ------------ MAIN FUNCTION -------------
 int main() {
     AppContext app;
     init_game_application(&app);
     while (app.isRunning) {
         // Calculate frame time
-        Uint32 currentTicks = SDL_GetTicks();
+        uint32_t currentTicks = SDL_GetTicks();
         app.timer.accumulator += currentTicks - app.timer.lastTicks;
         app.sounds.dotTimer += currentTicks - app.timer.lastTicks;
         app.sounds.moveTimer += currentTicks - app.timer.lastTicks;
@@ -932,7 +1123,7 @@ int main() {
         render(&app);
         
         // Frame rate control
-        Uint32 frameTime = SDL_GetTicks() - currentTicks;
+        uint32_t frameTime = SDL_GetTicks() - currentTicks;
         if (frameTime < DELTA_TICK_MS) {
             SDL_Delay(DELTA_TICK_MS - frameTime);
         }
