@@ -1,20 +1,37 @@
 #ifndef PACMAN_H
 #define PACMAN_H
 
+#if defined(_WIN32) || defined(__APPLE__)
+#include <SDL.h>
+#include <SDL_ttf.h>
+#include <SDL_image.h>
+#include <SDL_mixer.h>
+#else
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_stdinc.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
+#include <SDL2/SDL_messagebox.h>
 #include <SDL2/SDL_mixer.h>
+#endif
 
-#include <assert.h>
 #include <stdio.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <time.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#define MKDIR(p) _mkdir(p)
+#define PATH_SEP "\\"
+#else
 #include <sys/types.h>
-#include <time.h> 
+#include <sys/stat.h>
+#include <unistd.h>
+#define MKDIR(p) mkdir(p, 0755)
+#define PATH_SEP "/"
+#endif
+
 #include "rank.h"
 
 #define WINDOW_WIDTH 464
